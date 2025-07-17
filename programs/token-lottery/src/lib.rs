@@ -139,7 +139,9 @@ pub mod token_lottery {
     }    
     pub fn buy_ticket(ctx: Context<BuyTicket>) -> Result<()> {
     let clock = Clock::get()?;
-    let ticket_name = NAME.to_owned() + ctx.accounts.token_lottery.total_tickets.to_string().as_str();
+    let ticket_name = NAME.to_owned() + ctx.accounts.token_lottery.ticket_num.to_string().as_str();
+
+    msg!("Buying ticket: {}", ticket_name);
 
     if clock.slot < ctx.accounts.token_lottery.lottery_start || 
         clock.slot > ctx.accounts.token_lottery.lottery_end as u64 {
@@ -173,7 +175,7 @@ pub mod token_lottery {
                 to: ctx.accounts.destination.to_account_info(),
                 authority: ctx.accounts.collection_mint.to_account_info(),
             },
-            signer_seeds,
+            &signer_seeds,
         ),
         1,
     )?;
@@ -182,7 +184,7 @@ pub mod token_lottery {
         CpiContext::new_with_signer(
             ctx.accounts.token_metadata_program.to_account_info(),
             CreateMetadataAccountsV3 {
-                metadata: ctx.accounts.metadata.to_account_info(),
+                metadata: ctx.accounts.ticket_metadata.to_account_info(),
                 mint: ctx.accounts.ticket_mint.to_account_info(),
                 mint_authority: ctx.accounts.collection_mint.to_account_info(),
                 payer: ctx.accounts.payer.to_account_info(),    
@@ -204,10 +206,10 @@ pub mod token_lottery {
             CreateMasterEditionV3 {
                 payer: ctx.accounts.payer.to_account_info(),
                 mint: ctx.accounts.ticket_mint.to_account_info(),
-                edition: ctx.accounts.master_edition.to_account_info(),
+                edition: ctx.accounts.ticket_master_edition.to_account_info(),
                 mint_authority: ctx.accounts.collection_mint.to_account_info(),
                 update_authority: ctx.accounts.collection_mint.to_account_info(),
-                metadata: ctx.accounts.metadata.to_account_info(),
+                metadata: ctx.accounts.ticket_metadata.to_account_info(),
                 token_program: ctx.accounts.token_program.to_account_info(),
                 system_program: ctx.accounts.system_program.to_account_info(),
                 rent : ctx.accounts.rent.to_account_info(),
@@ -220,7 +222,7 @@ pub mod token_lottery {
     CpiContext::new_with_signer(
         ctx.accounts.token_metadata_program.to_account_info(),
         SetAndVerifySizedCollectionItem {
-            metadata: ctx.accounts.metadata.to_account_info(),
+            metadata: ctx.accounts.ticket_metadata.to_account_info(),
             collection_authority: ctx.accounts.collection_mint.to_account_info(),
             payer: ctx.accounts.payer.to_account_info(),
             update_authority: ctx.accounts.collection_mint.to_account_info(),
@@ -235,7 +237,10 @@ pub mod token_lottery {
         ),
         None,
     )?;
+
     ctx.accounts.token_lottery.ticket_num += 1;
+    msg!("Ticket number: {}", ctx.accounts.token_lottery.ticket_num);
+
     Ok(())
 }
     pub fn commit_a_winner(ctx: Context<CommitWinner>) -> Result<()> {
@@ -264,7 +269,7 @@ pub mod token_lottery {
         }
         if ctx.accounts.payer.key() != token_lottery.authority {
             return Err(ErrorCode::NotAuthorized.into());
-        }
+        }   
         if clock.slot < token_lottery.lottery_end {
             msg!("Current slot: {}", clock.slot);
             msg!("End slot: {}", token_lottery.lottery_end);
@@ -339,7 +344,7 @@ pub struct Initialize<'info> {
 }
 
 #[derive(Accounts)]
-pub struct CommitWinner<'info> {
+pub struct CommitWinner<'info> {    
     #[account(mut)]
     pub payer: Signer<'info>,
 
@@ -350,7 +355,7 @@ pub struct CommitWinner<'info> {
     )]
     pub token_lottery: Account<'info, TokenLottery>,
 
-    /// CHECK: The account's data is validated manually within the handler.
+    /// CHECK: This account is checked by the Switchboard smart contract
     pub randomness_account_data: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -419,6 +424,7 @@ pub struct InitializeLottery<'info> {
 pub struct BuyTicket<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
+    
     #[account(
         mut,
         seeds = [b"token_lottery".as_ref()],
@@ -449,13 +455,29 @@ pub struct BuyTicket<'info> {
 
     #[account(
         mut,
-        seeds = [b"metadata", token_metadata_program.key().as_ref(), 
-        collection_mint.key().as_ref()],
+        seeds = [
+                b"metadata",
+                token_metadata_program.key().as_ref(), 
+                ticket_mint.key().as_ref(),
+                ],
         bump,
         seeds::program = token_metadata_program.key(),
     )]
-    /// CHECK: This account will be initialized by the metaplex program
-    pub metadata: UncheckedAccount<'info>,
+    /// CHECK: This account is checked by the metadata smart contract
+    pub ticket_metadata: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"metadata",
+                token_metadata_program.key().as_ref(), 
+                ticket_mint.key().as_ref(),
+                b"edition"
+                ],
+        bump,
+        seeds::program = token_metadata_program.key(),
+    )]
+    /// CHECK: This account is checked by the metadata smart contract
+    pub ticket_master_edition: UncheckedAccount<'info>,    
 
     #[account(
         mut,
@@ -463,31 +485,26 @@ pub struct BuyTicket<'info> {
                 b"metadata",
                 token_metadata_program.key().as_ref(), 
                 collection_mint.key().as_ref(),
-                b"edition"
-            ],
+                ],
         bump,
         seeds::program = token_metadata_program.key(),
     )]
-    /// CHECK: This account will be initialized by the metaplex program
-    pub master_edition: UncheckedAccount<'info>,
-
-     #[account(
-        mut,
-        seeds = [b"metadata", token_metadata_program.key().as_ref(), collection_mint.key().as_ref()],
-        bump,
-        seeds::program = token_metadata_program.key(),
-    )]
-    /// CHECK: This account will be initialized by the metaplex program
+    /// CHECK: This account is checked by the metadata smart contract
     pub collection_metadata: UncheckedAccount<'info>,
+
     #[account(
         mut,
-        seeds = [b"metadata", token_metadata_program.key().as_ref(), 
-            collection_mint.key().as_ref(), b"edition"],
+        seeds = [b"metadata",
+                token_metadata_program.key().as_ref(), 
+                collection_mint.key().as_ref(),
+                b"edition"
+                ],
         bump,
         seeds::program = token_metadata_program.key(),
     )]
-    /// CHECK: This account will be initialized by the metaplex program
-    pub collection_master_edition: UncheckedAccount<'info>,
+    /// CHECK: This account is checked by the metadata smart contract
+    pub collection_master_edition: UncheckedAccount<'info>, 
+
     
     #[account(
         mut,
@@ -498,8 +515,8 @@ pub struct BuyTicket<'info> {
 
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub token_program: Interface<'info, TokenInterface>,
-    pub system_program: Program<'info, System>,
     pub token_metadata_program: Program<'info, Metadata>,
+    pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
 }
 
